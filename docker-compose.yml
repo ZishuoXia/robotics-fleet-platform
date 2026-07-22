@@ -1,0 +1,83 @@
+# M2 阶段:在 M1 的 Postgres 基础上,增加 Redis(在线状态缓存)和 Kafka(心跳消息队列)。
+# 用 docker compose up -d 一键启动所有依赖,无需本地安装。
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fleet-postgres
+    environment:
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet_dev_pwd
+      POSTGRES_DB: fleet           #这个环境变量是魔法所在。PostgreSQL 官方镜像在首次启动时会检测到这个变量，并自动执行：
+        #sql
+        #CREATE DATABASE fleet;
+      #CREATE USER fleet WITH PASSWORD 'fleet_dev_pwd';
+      #GRANT ALL PRIVILEGES ON DATABASE fleet TO fleet;
+      #你的数据库就是这样“自动”创建出来的。
+    ports:
+      - "5432:5432"      #将容器 5432 端口映射到本机 5432 端口
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fleet -d fleet"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ============= M2 新增:Redis =============
+  # 用途:存储设备实时在线状态(带 TTL),毫秒级查询
+  redis:
+    image: redis:7-alpine
+    container_name: fleet-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ============= M2 新增:Kafka(KRaft 模式,不需要 Zookeeper)=============
+  # 用途:接收海量设备心跳,削峰填谷
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: fleet-kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # Kafka 可视化管理界面 - 访问 http://localhost:8090
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: fleet-kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: fleet-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      - kafka
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:

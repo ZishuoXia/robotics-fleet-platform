@@ -1,0 +1,115 @@
+spring:
+  application:
+    name: robotics-fleet-platform
+  profiles:
+    active: dev
+  jackson:
+    time-zone: UTC
+    date-format: yyyy-MM-dd'T'HH:mm:ss'Z'
+    serialization:
+      write-dates-as-timestamps: false
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+  # ============= M2 新增:Kafka 配置 =============
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      # 生产者把对象序列化为字节流后发到 Kafka
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      # acks=1:消息写到 leader 副本后就 ack(平衡性能和可靠性)
+      # acks=all:所有副本都写入才 ack(更可靠,但慢)
+      acks: 1
+      retries: 3                    # 发送失败重试 3 次
+      properties:
+        # 让消息按 key(tenantId)分配到固定分区,同一租户消息有序
+        partitioner.class: org.apache.kafka.clients.producer.internals.DefaultPartitioner
+    consumer:
+      group-id: heartbeat-processor   # 消费者组 ID
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      # earliest:第一次启动从最早的消息开始消费
+      # latest:只消费启动后的新消息(我们用这个,避免重启时重放历史)
+      auto-offset-reset: latest
+      enable-auto-commit: false      # 手动提交 offset,保证消息处理完才标记已消费
+      properties:
+        spring.json.trusted.packages: "com.zishuo.fleet.module.heartbeat.domain"
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: "com.zishuo.fleet.module.heartbeat.domain.HeartbeatEvent"
+    listener:
+      ack-mode: MANUAL_IMMEDIATE     # 配合 enable-auto-commit=false,手动 ack
+
+  # ============= M2 新增:Redis 配置 =============
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000
+      lettuce:
+        pool:
+          max-active: 16             # 连接池最大连接数
+          max-idle: 8
+          min-idle: 2
+
+server:
+  port: 8080
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+app:
+  jwt:
+    secret: ${APP_JWT_SECRET:ZGV2LXNlY3JldC1wbGVhc2UtY2hhbmdlLWluLXByb2R1Y3Rpb24tMzJieXRlcw==}
+    expiration-seconds: 3600
+    issuer: robotics-fleet-platform
+
+  # ============= M2 新增:心跳相关业务参数 =============
+  heartbeat:
+    # 设备 TTL:Redis 中状态过期时间(秒)。超过此时间没心跳,Redis 自动失效。
+    online-ttl-seconds: 90
+    # 离线检测扫描间隔(毫秒)。定时任务每隔多久扫描数据库找超时设备。
+    offline-scan-interval-ms: 10000
+    # 离线判定阈值(秒)。最后心跳超过此时间,设备标记为 OFFLINE。
+    offline-threshold-seconds: 90
+
+  kafka:
+    topics:
+      heartbeat: device-heartbeats   # 心跳消息的 topic 名
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+
+logging:
+  level:
+    root: INFO
+    com.zishuo.fleet: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"

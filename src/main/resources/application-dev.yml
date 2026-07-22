@@ -1,0 +1,30 @@
+# Dev profile - 连接 docker-compose 启动的所有依赖服务
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fleet
+    username: fleet
+    password: fleet_dev_pwd
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    show-sql: false
+
+  # 开发环境的 Kafka 和 Redis 都在 localhost
+  kafka:
+    bootstrap-servers: localhost:9092
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+logging:
+  level:
+    com.zishuo.fleet: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: INFO
+    # M2 新增:Kafka 和 Redis 日志(调试时可打开)
+    org.springframework.kafka: INFO
+    org.springframework.data.redis: INFO
